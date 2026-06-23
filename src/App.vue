@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { UploadFilled } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import EditableDataTable from './components/EditableDataTable.vue'
 import ExcelUploader from './components/ExcelUploader.vue'
 import FieldMappingPanel from './components/FieldMappingPanel.vue'
@@ -15,6 +15,7 @@ const {
   testingConnection,
   canSubmit,
   setParsedWorksheet,
+  resetImportedData,
   updateCell,
   removeRow,
   updateHasuraConfig,
@@ -29,9 +30,24 @@ function handleParsed(worksheet: ParsedWorksheet) {
 
 async function handleSubmit() {
   try {
-    const rowCount = await submitToHasura()
-    ElMessage.success(`已打印 ${rowCount} 条待提交数据到控制台，未执行真实提交`)
+    await ElMessageBox.confirm(
+      '确认将当前表格数据提交到 Hasura 吗？提交成功后会清空当前预览数据。',
+      '确认提交',
+      {
+        type: 'warning',
+        confirmButtonText: '确认提交',
+        cancelButtonText: '取消',
+      },
+    )
+
+    const affectedRows = await submitToHasura()
+    resetImportedData()
+    ElMessage.success(`提交完成，Hasura 共写入或更新 ${affectedRows} 条记录`)
   } catch (error) {
+    if (error === 'cancel' || error === 'close') {
+      return
+    }
+
     const message = error instanceof Error ? error.message : '导入失败'
     ElMessage.error(message)
   }
@@ -60,7 +76,7 @@ async function handleTestHasuraConfig() {
         <div class="eyebrow">Vue 3 + Element Plus + Hasura</div>
         <h1>Excel 导入与逐行校对</h1>
         <p>
-          处理合并单元格、过滤说明/合计行、逐行编辑后生成 Hasura 提交数据。
+          处理合并单元格、过滤说明/合计行、逐行编辑后提交到 Hasura。
         </p>
       </div>
 
@@ -72,7 +88,7 @@ async function handleTestHasuraConfig() {
         :disabled="!canSubmit"
         @click="handleSubmit"
       >
-        打印提交数据
+        提交到 Hasura
       </el-button>
     </section>
 

@@ -28,6 +28,11 @@ export function useExcelImport() {
     editableRows.value = worksheet.rows.map((row) => ({ ...row }))
   }
 
+  function resetImportedData() {
+    parsedWorksheet.value = null
+    editableRows.value = []
+  }
+
   function updateCell(rowId: string, field: string, value: string | number | boolean | null) {
     const target = editableRows.value.find((row) => row.__rowId === rowId)
 
@@ -86,6 +91,7 @@ export function useExcelImport() {
     testingConnection,
     canSubmit,
     setParsedWorksheet,
+    resetImportedData,
     updateCell,
     removeRow,
     updateHasuraConfig,

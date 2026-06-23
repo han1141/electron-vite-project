@@ -42,6 +42,10 @@ interface ExistingProjectRecord {
   project_code: number | null
 }
 
+interface HasuraMutationAffectedRows {
+  affected_rows?: number
+}
+
 export async function testHasuraConnection(config: HasuraImportConfig): Promise<number> {
   if (!config.endpoint || !config.adminSecret) {
     throw new Error('请先填写 Hasura 地址与请求头密码')
@@ -71,16 +75,12 @@ export async function importRowsToHasura(
 
   const payload = buildMutationPayload(rows, hasuraImportProfile.fieldMappings)
   validatePreparedObjects(rows, payload.variables.objects)
-  const mergePreview = await buildMergePreview(config, payload.variables.objects)
+  const mergePlan = await buildMergePreview(config, payload.variables.objects)
 
-  console.group('Hasura Import Payload Preview')
-  console.log('endpoint:', config.endpoint)
-  console.log('mutation:', hasuraImportProfile.mutationName)
-  console.log('payload:', payload)
-  console.log('mergePreview:', mergePreview)
-  console.groupEnd()
+  const insertAffectedRows = await executeInsertMutations(config, mergePlan.inserts)
+  const updateAffectedRows = await executeUpdateMutations(config, mergePlan.updates)
 
-  return payload.variables.objects.length
+  return insertAffectedRows + updateAffectedRows
 }
 
 function buildMutationPayload(
@@ -306,6 +306,60 @@ async function findExistingProjectsByCodes(
   )
 
   return result.data?.report_project ?? []
+}
+
+async function executeInsertMutations(
+  config: HasuraImportConfig,
+  inserts: Array<Record<string, string | number | boolean | null>>,
+): Promise<number> {
+  if (!inserts.length) {
+    return 0
+  }
+
+  const result = await requestHasura<Record<string, HasuraMutationAffectedRows>>(
+    config,
+    `
+      mutation InsertReportProject($objects: [${hasuraImportProfile.objectTypeName}!]!) {
+        ${hasuraImportProfile.mutationName}(objects: $objects) {
+          affected_rows
+        }
+      }
+    `,
+    {
+      objects: inserts,
+    },
+  )
+
+  return result.data?.[hasuraImportProfile.mutationName]?.affected_rows ?? 0
+}
+
+async function executeUpdateMutations(
+  config: HasuraImportConfig,
+  updates: Array<{ id: string; _set: Record<string, string | number | boolean | null> }>,
+): Promise<number> {
+  if (!updates.length) {
+    return 0
+  }
+
+  const mutation = `
+    mutation UpdateReportProjectByPk($id: String!, $_set: report_project_set_input!) {
+      update_report_project_by_pk(pk_columns: { id: $id }, _set: $_set) {
+        id
+      }
+    }
+  `
+
+  const results = await Promise.all(
+    updates.map((updateItem) => {
+      return requestHasura<{ update_report_project_by_pk?: { id: string } }>(
+        config,
+        mutation,
+        updateItem,
+      )
+    }),
+  )
+
+  return results.filter((result) => Boolean(result.data?.update_report_project_by_pk?.id)).length
 }
 
 async function requestHasura<TData>(
