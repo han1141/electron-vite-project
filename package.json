@@ -2,12 +2,14 @@
   "name": "electron-vite-project",
   "private": true,
   "version": "0.0.0",
+  "description": "Electron tool for importing Excel data, previewing rows, and preparing Hasura payloads.",
+  "author": "han1141",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "vue-tsc --noEmit",
     "build": "npm run typecheck && vite build",
-    "dist": "npm run build && electron-builder",
+    "dist": "npm run build && electron-builder --publish never",
     "preview": "vite preview"
   },
   "dependencies": {
