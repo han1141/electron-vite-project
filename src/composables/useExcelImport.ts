@@ -1,15 +1,18 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { hasuraImportProfile } from '../config/hasuraImportProfile'
 import type { ExcelDataRow, HasuraImportConfig, ParsedWorksheet } from '../types/excel'
-import { importRowsToHasura, testHasuraConnection } from '../utils/hasura'
+import { fetchDictItems, importRowsToHasura, testHasuraConnection } from '../utils/hasura'
 
 const STORAGE_KEY = 'excel-import-hasura-config'
+const PROJECT_STATUS_DICT_CODE = 'PROJECT_STATUS'
+const PROJECT_STATUS_SOURCE_KEY = '项目状态'
 
 export function useExcelImport() {
   const parsedWorksheet = ref<ParsedWorksheet | null>(null)
   const editableRows = ref<ExcelDataRow[]>([])
   const importing = ref(false)
   const testingConnection = ref(false)
+  const projectStatusMap = ref(new Map<string, string>())
 
   const hasuraConfig = reactive<HasuraImportConfig>(loadSavedConfig())
 
@@ -23,9 +26,15 @@ export function useExcelImport() {
     )
   })
 
-  function setParsedWorksheet(worksheet: ParsedWorksheet) {
-    parsedWorksheet.value = worksheet
-    editableRows.value = worksheet.rows.map((row) => ({ ...row }))
+  async function setParsedWorksheet(worksheet: ParsedWorksheet) {
+    const statusMap = await ensureProjectStatusMap()
+    const mappedRows = mapWorksheetProjectStatusRows(worksheet.rows, statusMap)
+
+    parsedWorksheet.value = {
+      ...worksheet,
+      rows: mappedRows,
+    }
+    editableRows.value = mappedRows.map((row) => ({ ...row }))
   }
 
   function resetImportedData() {
@@ -83,6 +92,24 @@ export function useExcelImport() {
     }
   }
 
+  watch(
+    () => [hasuraConfig.endpoint, hasuraConfig.adminSecret] as const,
+    async ([endpoint, adminSecret]) => {
+      projectStatusMap.value = new Map()
+
+      if (!endpoint || !adminSecret) {
+        return
+      }
+
+      try {
+        await ensureProjectStatusMap()
+      } catch (error) {
+        console.error('[hasura] 启动时预取字典失败', error)
+      }
+    },
+    { immediate: true },
+  )
+
   return {
     parsedWorksheet,
     editableRows,
@@ -99,6 +126,47 @@ export function useExcelImport() {
     verifyHasuraConnection,
     submitToHasura,
   }
+
+  async function ensureProjectStatusMap(): Promise<Map<string, string>> {
+    if (projectStatusMap.value.size > 0) {
+      return projectStatusMap.value
+    }
+
+    if (!hasuraConfig.endpoint || !hasuraConfig.adminSecret) {
+      return projectStatusMap.value
+    }
+
+    const dictItems = await fetchDictItems(hasuraConfig, PROJECT_STATUS_DICT_CODE)
+    projectStatusMap.value = new Map(
+      dictItems.map((item) => [item.name.trim(), item.id]),
+    )
+
+    return projectStatusMap.value
+  }
+}
+
+function mapWorksheetProjectStatusRows(
+  rows: ExcelDataRow[],
+  projectStatusMap: Map<string, string>,
+): ExcelDataRow[] {
+  return rows.map((row) => {
+    const sourceValue = row[PROJECT_STATUS_SOURCE_KEY]
+
+    if (typeof sourceValue !== 'string') {
+      return { ...row }
+    }
+
+    const mappedId = projectStatusMap.get(sourceValue.trim())
+
+    if (!mappedId) {
+      return { ...row }
+    }
+
+    return {
+      ...row,
+      [PROJECT_STATUS_SOURCE_KEY]: mappedId,
+    }
+  })
 }
 
 function loadSavedConfig(): HasuraImportConfig {

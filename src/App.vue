@@ -24,8 +24,13 @@ const {
   submitToHasura,
 } = useExcelImport()
 
-function handleParsed(worksheet: ParsedWorksheet) {
-  setParsedWorksheet(worksheet)
+async function handleParsed(worksheet: ParsedWorksheet) {
+  try {
+    await setParsedWorksheet(worksheet)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Excel 解析后映射失败'
+    ElMessage.error(message)
+  }
 }
 
 async function handleSubmit() {

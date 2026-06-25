@@ -1,4 +1,4 @@
-import type { ExcelDataRow, HasuraImportConfig } from '../types/excel'
+import type { ExcelDataRow, HasuraImportConfig, DictItem } from '../types/excel'
 import { hasuraImportProfile } from '../config/hasuraImportProfile'
 
 const NUMERIC_FIELDS = new Set([
@@ -65,6 +65,30 @@ export async function testHasuraConnection(config: HasuraImportConfig): Promise<
   return result.data?.report_project?.length ?? 0
 }
 
+export async function fetchDictItems(
+  config: HasuraImportConfig,
+  dictGroupCode: string,
+): Promise<DictItem[]> {
+  const result = await requestHasura<{ report_dict_group?: Array<{ dicts?: DictItem[] }> }>(
+    config,
+    `
+      query FetchDictItems($dictGroupCode: String!) {
+        report_dict_group(where: { code: { _eq: $dictGroupCode } }) {
+          dicts {
+            id
+            name
+          }
+        }
+      }
+    `,
+    { dictGroupCode },
+  )
+
+  const dictItems = result.data?.report_dict_group?.[0]?.dicts ?? []
+  
+  return dictItems
+}
+
 export async function importRowsToHasura(
   config: HasuraImportConfig,
   rows: ExcelDataRow[],
@@ -73,7 +97,13 @@ export async function importRowsToHasura(
     throw new Error('请先在 src/config/hasuraImportProfile.ts 中设置固定 Hasura mutation 配置')
   }
 
-  const payload = buildMutationPayload(rows, hasuraImportProfile.fieldMappings)
+  const dictItems = await fetchDictItems(config, 'PROJECT_STATUS')
+  const nameToIdMap = new Map<string, string>()
+  dictItems.forEach((item) => {
+    nameToIdMap.set(item.name, item.id)
+  })
+
+  const payload = buildMutationPayload(rows, hasuraImportProfile.fieldMappings, nameToIdMap)
   validatePreparedObjects(rows, payload.variables.objects)
   const mergePlan = await buildMergePreview(config, payload.variables.objects)
 
@@ -86,8 +116,9 @@ export async function importRowsToHasura(
 function buildMutationPayload(
   rows: ExcelDataRow[],
   fieldMappings: Record<string, string | string[]>,
+  nameToIdMap: Map<string, string>,
 ) {
-  const objects = rows.map((row) => mapRowToHasuraObject(row, fieldMappings))
+  const objects = rows.map((row) => mapRowToHasuraObject(row, fieldMappings, nameToIdMap))
 
   return {
     query: `
@@ -106,6 +137,7 @@ function buildMutationPayload(
 function mapRowToHasuraObject(
   row: ExcelDataRow,
   fieldMappings: Record<string, string | string[]>,
+  nameToIdMap: Map<string, string>,
 ): Record<string, string | number | boolean | null> {
   const sourceEntries = Object.entries(row).filter(([key]) => !key.startsWith('__'))
 
@@ -120,7 +152,16 @@ function mapRowToHasuraObject(
       const targetKeys = Array.isArray(mappedTargets) ? mappedTargets : [mappedTargets]
 
       targetKeys.forEach((targetKey) => {
-        result[targetKey] = sanitizeValue(targetKey, value)
+        if (targetKey === 'project_status' && typeof value === 'string') {
+          const dictId = nameToIdMap.get(value.trim())
+          if (dictId) {
+            result[targetKey] = dictId
+          } else {
+            result[targetKey] = sanitizeValue(targetKey, value)
+          }
+        } else {
+          result[targetKey] = sanitizeValue(targetKey, value)
+        }
       })
 
       return result

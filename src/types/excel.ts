@@ -37,3 +37,11 @@ export interface HasuraImportConfig {
   endpoint: string
   adminSecret: string
 }
+
+export interface DictItem {
+  id: string
+  dict_group_id: string
+  name: string
+  serial: number | null
+  code: string | null
+}
